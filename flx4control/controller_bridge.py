@@ -81,6 +81,14 @@ class ControllerBridge(QObject):
     def is_mic_muted(self) -> bool:
         return self._mic_muted
 
+    def set_audio_devices(
+        self,
+        input_device: Optional[str],
+        output_device: Optional[str],
+    ) -> None:
+        """Update the audio devices used for mic loopback."""
+        self._loopback.set_devices(input_device, output_device)
+
     def refresh_leds(self) -> None:
         """Re-send all pad, tab, and button LEDs from current state."""
         if not self._controller:

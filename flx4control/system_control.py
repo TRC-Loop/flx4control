@@ -86,6 +86,36 @@ def do_scroll(direction: int, amount: int = 3) -> None:
 
 
 # ===========================================================================
+# Audio device enumeration
+# ===========================================================================
+
+def list_audio_inputs() -> list[tuple[int, str]]:
+    """Return [(device_index, device_name)] for all available input devices."""
+    try:
+        import sounddevice as sd
+        result = []
+        for i, d in enumerate(sd.query_devices()):
+            if d.get("max_input_channels", 0) > 0:
+                result.append((i, d.get("name", f"Device {i}")))
+        return result
+    except Exception:
+        return []
+
+
+def list_audio_outputs() -> list[tuple[int, str]]:
+    """Return [(device_index, device_name)] for all available output devices."""
+    try:
+        import sounddevice as sd
+        result = []
+        for i, d in enumerate(sd.query_devices()):
+            if d.get("max_output_channels", 0) > 0:
+                result.append((i, d.get("name", f"Device {i}")))
+        return result
+    except Exception:
+        return []
+
+
+# ===========================================================================
 # Media keys
 # ===========================================================================
 

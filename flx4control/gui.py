@@ -687,6 +687,62 @@ class SettingsWidget(QGroupBox):
         self.reverse_check.stateChanged.connect(self._on_reverse_changed)
         form.addRow("", self.reverse_check)
 
+        # --- Audio devices ---
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep2)
+
+        # Microphone (input) device
+        self.input_dev_combo = QComboBox()
+        self.input_dev_combo.currentIndexChanged.connect(self._on_input_dev_changed)
+        form.addRow("Microphone:", self.input_dev_combo)
+
+        # Speaker (output) device
+        self.output_dev_combo = QComboBox()
+        self.output_dev_combo.currentIndexChanged.connect(self._on_output_dev_changed)
+        form.addRow("Speaker:", self.output_dev_combo)
+
+        refresh_btn = QPushButton("Refresh Devices")
+        refresh_btn.setMaximumWidth(130)
+        refresh_btn.clicked.connect(self._refresh_devices)
+        form.addRow("", refresh_btn)
+
+        # Populate device lists
+        self._refresh_devices()
+
+    def _refresh_devices(self) -> None:
+        from . import system_control
+
+        saved_in = self.config.get_audio_input_device()
+        saved_out = self.config.get_audio_output_device()
+
+        # Rebuild input combo
+        self.input_dev_combo.blockSignals(True)
+        self.input_dev_combo.clear()
+        self.input_dev_combo.addItem("System Default", None)
+        self._input_devices: list = []
+        for idx, name in system_control.list_audio_inputs():
+            self.input_dev_combo.addItem(name, name)
+            self._input_devices.append((idx, name))
+        # Restore saved selection
+        if saved_in:
+            i = self.input_dev_combo.findText(saved_in)
+            self.input_dev_combo.setCurrentIndex(max(0, i))
+        self.input_dev_combo.blockSignals(False)
+
+        # Rebuild output combo
+        self.output_dev_combo.blockSignals(True)
+        self.output_dev_combo.clear()
+        self.output_dev_combo.addItem("System Default", None)
+        self._output_devices: list = []
+        for idx, name in system_control.list_audio_outputs():
+            self.output_dev_combo.addItem(name, name)
+            self._output_devices.append((idx, name))
+        if saved_out:
+            i = self.output_dev_combo.findText(saved_out)
+            self.output_dev_combo.setCurrentIndex(max(0, i))
+        self.output_dev_combo.blockSignals(False)
+
     def _load_values(self) -> None:
         vol = self.config.get_volume_fader()
         self.vol_combo.setCurrentIndex(
@@ -720,6 +776,16 @@ class SettingsWidget(QGroupBox):
 
     def _on_reverse_changed(self, state: int) -> None:
         self.config.set_scroll_reverse(bool(state))
+
+    def _on_input_dev_changed(self, idx: int) -> None:
+        name = self.input_dev_combo.itemData(idx)  # None = system default
+        self.config.set_audio_input_device(name)
+        self.bridge.set_audio_devices(name, self.config.get_audio_output_device())
+
+    def _on_output_dev_changed(self, idx: int) -> None:
+        name = self.output_dev_combo.itemData(idx)
+        self.config.set_audio_output_device(name)
+        self.bridge.set_audio_devices(self.config.get_audio_input_device(), name)
 
 
 # ---------------------------------------------------------------------------
@@ -986,6 +1052,103 @@ class MainWindow(QMainWindow):
             QSystemTrayIcon.MessageIcon.Information,
             2000,
         )
+
+
+# ---------------------------------------------------------------------------
+# Windows first-run driver guide
+# ---------------------------------------------------------------------------
+
+class WindowsDriverGuideDialog(QDialog):
+    """
+    Shown once on first launch on Windows. Explains how to get the DDJ-FLX4
+    recognised as a MIDI device and how to set up audio devices.
+    """
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("DDJ-FLX4 — Windows Setup Guide")
+        self.setMinimumWidth(540)
+        self.setModal(True)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setSpacing(12)
+
+        # Header
+        header = QLabel("Welcome to FLX4 Control")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #4dffaa;")
+        root.addWidget(header)
+
+        intro = QLabel(
+            "Before using the app, please make sure your DDJ-FLX4 is properly "
+            "set up on Windows. Follow the steps below if the controller is "
+            "shown as <b style='color:#ff6644'>Not connected</b>."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #c0c0c0;")
+        root.addWidget(intro)
+
+        # Step 1
+        step1 = QGroupBox("Step 1 — Install the Pioneer DDJ-FLX4 driver")
+        s1l = QVBoxLayout(step1)
+        s1l.addWidget(_guide_label(
+            "The DDJ-FLX4 requires the official Pioneer DJ USB-MIDI driver to "
+            "function correctly on Windows."
+        ))
+        s1l.addWidget(_guide_label("1. Go to <b>pioneerdj.com</b> and search for <i>DDJ-FLX4 Software & Drivers</i>."))
+        s1l.addWidget(_guide_label("2. Download and run the Windows driver installer."))
+        s1l.addWidget(_guide_label("3. <b>Restart your computer</b> after installation."))
+
+        open_btn = QPushButton("Open Pioneer DJ Support Page")
+        open_btn.clicked.connect(lambda: __import__("webbrowser").open(
+            "https://www.pioneerdj.com/support/software/"
+        ))
+        open_btn.setStyleSheet(
+            "QPushButton { background: #1a3a1a; color: #4dffaa; border: 1px solid #2a5a2a; "
+            "border-radius: 4px; padding: 6px 14px; } "
+            "QPushButton:hover { background: #1f4a1f; }"
+        )
+        s1l.addWidget(open_btn)
+        root.addWidget(step1)
+
+        # Step 2
+        step2 = QGroupBox("Step 2 — Connect the controller")
+        s2l = QVBoxLayout(step2)
+        s2l.addWidget(_guide_label("1. Connect the DDJ-FLX4 to your PC with a USB cable."))
+        s2l.addWidget(_guide_label("2. Make sure the power switch on the controller is <b>ON</b>."))
+        s2l.addWidget(_guide_label(
+            "3. Open <b>Device Manager</b> (Win+X → Device Manager) and confirm that "
+            "<i>Pioneer DDJ-FLX4</i> appears under <i>Sound, video and game controllers</i> "
+            "or <i>USB devices</i>."
+        ))
+        root.addWidget(step2)
+
+        # Step 3
+        step3 = QGroupBox("Step 3 — Select your audio devices")
+        s3l = QVBoxLayout(step3)
+        s3l.addWidget(_guide_label(
+            "After the controller connects, open the <b>Settings</b> panel at the bottom "
+            "of the main window and choose your <b>Microphone</b> and <b>Speaker</b> "
+            "devices for the mic monitoring (crossfader loopback) feature."
+        ))
+        root.addWidget(step3)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        root.addWidget(sep)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(self.accept)
+        root.addWidget(btn_box)
+
+
+def _guide_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("color: #c0c0c0; margin-left: 4px;")
+    lbl.setTextFormat(Qt.TextFormat.RichText)
+    return lbl
 
 
 # ---------------------------------------------------------------------------

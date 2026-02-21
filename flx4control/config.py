@@ -55,6 +55,11 @@ DEFAULT_CONFIG: dict = {
     "scroll_deck": 1,         # 1, 2, or 0 = disabled
     "scroll_sensitivity": 3,
     "scroll_reverse": False,
+    # Audio device names (None = system default)
+    "audio_input_device": None,
+    "audio_output_device": None,
+    # One-time guides
+    "windows_driver_guide_shown": False,
 }
 
 
@@ -155,6 +160,31 @@ class Config:
 
     def set_scroll_reverse(self, value: bool) -> None:
         self._data["scroll_reverse"] = value
+        self.save()
+
+    # --- audio devices ---
+
+    def get_audio_input_device(self) -> Optional[str]:
+        return self._data.get("audio_input_device")
+
+    def set_audio_input_device(self, name: Optional[str]) -> None:
+        self._data["audio_input_device"] = name
+        self.save()
+
+    def get_audio_output_device(self) -> Optional[str]:
+        return self._data.get("audio_output_device")
+
+    def set_audio_output_device(self, name: Optional[str]) -> None:
+        self._data["audio_output_device"] = name
+        self.save()
+
+    # --- first-run flags ---
+
+    def is_driver_guide_shown(self) -> bool:
+        return bool(self._data.get("windows_driver_guide_shown", False))
+
+    def mark_driver_guide_shown(self) -> None:
+        self._data["windows_driver_guide_shown"] = True
         self.save()
 
     # --- sound file management ---
