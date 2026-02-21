@@ -1064,7 +1064,7 @@ class WindowsDriverGuideDialog(QDialog):
     recognised as a MIDI device and how to set up audio devices.
     """
 
-    def __init__(self, parent: QWidget = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("DDJ-FLX4 — Windows Setup Guide")
         self.setMinimumWidth(540)
@@ -1176,8 +1176,20 @@ def main() -> int:
     bridge = ControllerBridge(config)
     bridge.start()
 
+    # Apply saved audio devices to the loopback before connecting
+    bridge.set_audio_devices(
+        config.get_audio_input_device(),
+        config.get_audio_output_device(),
+    )
+
     window = MainWindow(config, bridge)
     window.show()
+
+    # Show Windows driver guide on first launch
+    if platform.system() == "Windows" and not config.is_driver_guide_shown():
+        dlg = WindowsDriverGuideDialog(window)
+        dlg.exec()
+        config.mark_driver_guide_shown()
 
     ret = app.exec()
     bridge.stop()
