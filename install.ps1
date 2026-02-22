@@ -41,52 +41,70 @@ if (-not (Test-Path (Join-Path $PSScriptRoot "main.py"))) {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Find Python
+# 1. Find Python 3.10-3.12 (required for python-rtmidi binary wheel)
 # ---------------------------------------------------------------------------
 Write-Host "[1/7] Checking Python..." -ForegroundColor Green
 
-function Find-Python {
-    foreach ($cmd in @("py", "python", "python3")) {
+function Find-CompatiblePython {
+    # Try py launcher with specific compatible versions first
+    foreach ($ver in @("3.12", "3.11", "3.10")) {
+        try {
+            $exe = (& py "-$ver" -c "import sys; print(sys.executable)" 2>&1).ToString().Trim()
+            if ($LASTEXITCODE -eq 0 -and $exe -and (Test-Path $exe)) { return $exe }
+        } catch {}
+    }
+    # Try named executables
+    foreach ($cmd in @("python3.12", "python3.11", "python3.10", "python", "python3", "py")) {
         try {
             $null = & $cmd --version 2>&1
-            if ($LASTEXITCODE -eq 0) { return $cmd }
+            if ($LASTEXITCODE -ne 0) { continue }
+            $mn = [int](& $cmd -c "import sys; print(sys.version_info.minor)" 2>&1)
+            $mj = [int](& $cmd -c "import sys; print(sys.version_info.major)" 2>&1)
+            if ($mj -eq 3 -and $mn -ge 10 -and $mn -le 12) { return $cmd }
         } catch {}
     }
     return $null
 }
 
-$pythonCmd = Find-Python
+function Install-Python312 {
+    $pyExe = Join-Path $env:TEMP "python-3.12.9-amd64.exe"
+    $pyUrl = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe"
+    Write-Host "  Downloading Python 3.12.9..." -ForegroundColor Yellow
+    Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
+    Write-Host "  Installing Python 3.12 (user install, no admin required)..."
+    $proc = Start-Process $pyExe -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait -PassThru
+    Remove-Item $pyExe -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -ne 0) {
+        Write-Host "ERROR: Python 3.12 installer exited with code $($proc.ExitCode)." -ForegroundColor Red
+        pause; exit 1
+    }
+    # Refresh PATH so the new install is visible in this session
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","Machine")
+    Write-Host "  Python 3.12 installed." -ForegroundColor Green
+}
+
+$pythonCmd = Find-CompatiblePython
+
 if (-not $pythonCmd) {
-    Write-Host ""
-    Write-Host "ERROR: Python not found." -ForegroundColor Red
-    Write-Host "  Install Python 3.12: https://www.python.org/downloads/release/python-3129/"
-    Write-Host ""
-    pause; exit 1
+    Write-Host "  No compatible Python (3.10-3.12) found." -ForegroundColor Yellow
+    Install-Python312
+    # Try py launcher first, then common user-install path
+    $pythonCmd = Find-CompatiblePython
+    if (-not $pythonCmd) {
+        $fallback = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
+        if (Test-Path $fallback) { $pythonCmd = $fallback }
+    }
+    if (-not $pythonCmd) {
+        Write-Host ""
+        Write-Host "ERROR: Could not locate Python 3.12 after installation." -ForegroundColor Red
+        Write-Host "  Please restart your terminal and run the installer again."
+        Write-Host ""
+        pause; exit 1
+    }
 }
 
 $pyVerStr = (& $pythonCmd --version 2>&1).ToString()
-Write-Host "  Found: $pyVerStr"
-
-& $pythonCmd -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Write-Host "ERROR: Python 3.10 or newer required." -ForegroundColor Red
-    Write-Host "  Download Python 3.12: https://www.python.org/downloads/release/python-3129/"
-    Write-Host ""
-    pause; exit 1
-}
-
-# Warn on Python 3.13+ -- no pre-built python-rtmidi wheel
-$pyMinor = [int](& $pythonCmd -c "import sys; print(sys.version_info.minor)" 2>&1)
-$pyMajor = [int](& $pythonCmd -c "import sys; print(sys.version_info.major)" 2>&1)
-if ($pyMajor -ge 3 -and $pyMinor -ge 13) {
-    Write-Host ""
-    Write-Host "  WARNING: Python $pyMajor.$pyMinor detected." -ForegroundColor Yellow
-    Write-Host "  python-rtmidi has no pre-built wheel for Python 3.13+."
-    Write-Host "  If the install fails, switch to Python 3.12:"
-    Write-Host "  https://www.python.org/downloads/release/python-3129/"
-    Write-Host ""
-}
+Write-Host "  Using: $pyVerStr"
 
 # ---------------------------------------------------------------------------
 # 2. Choose install location
