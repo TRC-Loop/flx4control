@@ -13,10 +13,10 @@ from the hardware pads and knobs you already have.
 Run this in **PowerShell** (no admin needed for the AppData option):
 
 ```powershell
-iwr https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.ps1 -OutFile "$env:TEMP\flx4_install.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\flx4_install.ps1"
+$f="$env:TEMP\flx4_$(Get-Random).ps1"; iwr https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.ps1 -OutFile $f; powershell -ExecutionPolicy Bypass -File $f
 ```
 
-Or this for command prompt
+Or this for **Command Prompt**:
 
 ```cmd
 curl -fsSL -o "%TEMP%\flx4_install.ps1" https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.ps1 && powershell -ExecutionPolicy Bypass -File "%TEMP%\flx4_install.ps1"
