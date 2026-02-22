@@ -57,12 +57,47 @@ if errorlevel 1 (
 )
 
 :: ---------------------------------------------------------------------------
-:: 2. Set paths
+:: 2. Choose install location
+::    Pass "APPDATA" or "PROGRAMFILES" as %1 when re-launching with elevation
 :: ---------------------------------------------------------------------------
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
-set "INSTALL_DIR=%LOCALAPPDATA%\Programs\flx4control"
+if /i "%~1"=="PROGRAMFILES" (
+    set "INSTALL_DIR=%PROGRAMFILES%\flx4control"
+    goto :paths_set
+)
+if /i "%~1"=="APPDATA" (
+    set "INSTALL_DIR=%LOCALAPPDATA%\Programs\flx4control"
+    goto :paths_set
+)
+
+echo Where would you like to install FLX4 Control?
+echo.
+echo   1. AppData  ^(recommended ^— no admin required^)
+echo      %LOCALAPPDATA%\Programs\flx4control
+echo.
+echo   2. Program Files  ^(requires Administrator^)
+echo      %PROGRAMFILES%\flx4control
+echo.
+set /p "LOC_CHOICE=Enter 1 or 2 [default: 1]: "
+
+if "%LOC_CHOICE%"=="2" (
+    :: Check for admin rights; if missing, re-launch elevated
+    net session >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo   Requesting administrator privileges...
+        powershell -NoProfile -Command ^
+            "Start-Process cmd -ArgumentList '/c \"%~f0\" PROGRAMFILES' -Verb RunAs"
+        exit /b 0
+    )
+    set "INSTALL_DIR=%PROGRAMFILES%\flx4control"
+) else (
+    set "INSTALL_DIR=%LOCALAPPDATA%\Programs\flx4control"
+)
+
+:paths_set
 set "VENV_DIR=%INSTALL_DIR%\.venv"
 set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
