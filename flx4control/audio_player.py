@@ -14,8 +14,12 @@ def _ensure_mixer() -> bool:
         if _mixer_ready:
             return True
         try:
+            import pygame
             import pygame.mixer
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            if not pygame.get_init():
+                pygame.init()
+            pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init()
             _mixer_ready = True
             return True
         except Exception as exc:

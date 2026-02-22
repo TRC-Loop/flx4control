@@ -104,6 +104,14 @@ class ControllerBridge(QObject):
     # ------------------------------------------------------------------
 
     def _connect_loop(self) -> None:
+        # Initialize Windows COM for this thread (required by pycaw/comtypes)
+        if platform.system() == "Windows":
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+
         while self._running:
             was_connected = False
             try:
@@ -118,22 +126,25 @@ class ControllerBridge(QObject):
                 self._reset_leds()
 
                 # Heartbeat loop: also updates VU meters
+                _tick = 0
                 while self._running:
-                    time.sleep(2)
-                    try:
-                        ctrl.leds.set_button("BROWSE_PRESS", on=False)
-                    except Exception:
-                        break   # USB disconnected
+                    time.sleep(0.1)  # 10 Hz
+                    _tick += 1
 
-                    # Update VU meters (best-effort)
-                    try:
-                        ctrl.leds.set_level_meter(1, system_control.get_output_volume())
-                    except Exception:
-                        pass
-                    try:
-                        ctrl.leds.set_level_meter(2, system_control.get_mic_volume())
-                    except Exception:
-                        pass
+                    # Connectivity check every 2 s (every 20 ticks)
+                    if _tick % 20 == 0:
+                        try:
+                            ctrl.leds.set_button("BROWSE_PRESS", on=False)
+                        except Exception:
+                            break   # USB disconnected
+
+                    # VU meters at 5 Hz (every 2 ticks)
+                    if _tick % 2 == 0:
+                        try:
+                            ctrl.leds.set_level_meter(1, system_control.get_output_volume())
+                            ctrl.leds.set_level_meter(2, system_control.get_mic_volume())
+                        except Exception:
+                            pass
 
             except RuntimeError as exc:
                 print(f"[controller] {exc}")  # shows available MIDI ports
@@ -341,6 +352,9 @@ class ControllerBridge(QObject):
         try:
             if platform.system() == "Darwin":
                 subprocess.Popen(["open", path])
+            elif platform.system() == "Windows":
+                import os
+                os.startfile(path)  # equivalent to double-clicking in Explorer
             else:
                 subprocess.Popen([path])
         except Exception as exc:

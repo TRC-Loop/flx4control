@@ -85,16 +85,21 @@ class MicLoopback:
     def _start_stream(self) -> None:
         try:
             import sounddevice as sd
+            import numpy as np
 
             in_idx = self._device_index(self._input_device or "", "input")
             out_idx = self._device_index(self._output_device or "", "output")
 
             def callback(indata, outdata, frames, time_info, status):  # noqa: ARG001
                 vol = 0.0 if self._muted else self._volume
-                outdata[:] = indata * vol
+                # Mix all input channels to mono, then broadcast to all output channels.
+                # This handles mic (1ch) -> speakers (2ch) and any other combination.
+                mono = indata.mean(axis=1, keepdims=True) * vol
+                outdata[:] = np.broadcast_to(mono, outdata.shape)
 
             self._stream = sd.Stream(
                 device=(in_idx, out_idx),
+                samplerate=44100,
                 callback=callback,
                 dtype="float32",
                 latency="low",

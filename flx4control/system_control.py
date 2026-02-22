@@ -79,8 +79,8 @@ def get_mic_volume() -> float:
 def do_scroll(direction: int, amount: int = 3) -> None:
     """Scroll at the current mouse position. direction: +1=up, -1=down."""
     try:
-        import pyautogui
-        pyautogui.scroll(direction * amount)
+        from pynput.mouse import Controller
+        Controller().scroll(0, direction * amount)
     except Exception as exc:
         print(f"[scroll] {exc}")
 
@@ -164,11 +164,13 @@ def get_open_apps() -> list[str]:
             apps = [a.strip() for a in r.stdout.strip().split(",") if a.strip()]
             return sorted(set(apps))
         elif _PLATFORM == "Windows":
+            # Use window titles so AppActivate can match them directly
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
                  'Get-Process | Where-Object {$_.MainWindowTitle -ne ""} '
-                 '| Select-Object -ExpandProperty Name'],
+                 '| Select-Object -ExpandProperty MainWindowTitle'],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             apps = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
             return sorted(set(apps))
@@ -186,9 +188,11 @@ def focus_app(app_name: str) -> None:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         elif _PLATFORM == "Windows":
+            # AppActivate matches on window title (partial match supported)
+            safe = app_name.replace('"', '')
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-Command",
-                 f'(New-Object -ComObject WScript.Shell).AppActivate("{app_name}")'],
+                 f'(New-Object -ComObject WScript.Shell).AppActivate("{safe}")'],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
     except Exception as exc:
