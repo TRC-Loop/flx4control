@@ -79,14 +79,7 @@ echo "  --- Input control (pyautogui + pynput) ---"
 
 echo ""
 echo "  --- flx4py (controller library) ---"
-LOCAL_FLX4PY="$(dirname "$SCRIPT_DIR")/flx4py"
-if [ -f "$LOCAL_FLX4PY/pyproject.toml" ]; then
-    echo "  Installing from local source: $LOCAL_FLX4PY"
-    "$PIP" install "$LOCAL_FLX4PY"
-else
-    echo "  Installing from GitHub…"
-    "$PIP" install "git+https://github.com/TRC-Loop/flx4py.git"
-fi
+"$PIP" install "flx4py"
 
 echo ""
 echo "[5/6] Generating app icon…"

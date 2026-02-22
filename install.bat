@@ -178,12 +178,7 @@ echo [5/7] Installing dependencies...
 
 if errorlevel 1 goto :dep_error
 
-set "LOCAL_FLX4PY=%SCRIPT_DIR%\..\flx4py"
-if exist "%LOCAL_FLX4PY%\pyproject.toml" (
-    "%VENV_PY%" -m pip install "%LOCAL_FLX4PY%"
-) else (
-    "%VENV_PY%" -m pip install "git+https://github.com/TRC-Loop/flx4py.git"
-)
+"%VENV_PY%" -m pip install "flx4py"
 
 if errorlevel 1 goto :dep_error
 
