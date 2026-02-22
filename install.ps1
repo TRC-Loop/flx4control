@@ -12,15 +12,6 @@ Write-Host "============================================================"
 Write-Host ""
 
 # ------------------------------------------------------------
-# Prevent running from Temp (ZIP execution issue)
-# ------------------------------------------------------------
-if ($PSScriptRoot -like "*AppData\Local\Temp*") {
-    Write-Host "ERROR: Extract the ZIP before running the installer."
-    pause
-    exit 1
-}
-
-# ------------------------------------------------------------
 # Find Python 3.10+
 # ------------------------------------------------------------
 Write-Host "[1/7] Checking Python..."
