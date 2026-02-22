@@ -58,7 +58,7 @@ DEFAULT_CONFIG: dict = {
     "volume_fader": {"deck": 1, "control": "CH_FADER"},
     "mic_fader": {"deck": 2, "control": "CH_FADER"},
     "scroll_deck": 1,         # 1, 2, or 0 = disabled
-    "scroll_sensitivity": 3,
+    "scroll_sensitivity": 1,
     "scroll_reverse": False,
     # Audio device names (None = system default)
     "audio_input_device": None,

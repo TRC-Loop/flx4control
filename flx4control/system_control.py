@@ -3,9 +3,25 @@ from __future__ import annotations
 
 import platform
 import subprocess
+import threading
 from typing import Optional
 
 _PLATFORM = platform.system()
+
+# ---------------------------------------------------------------------------
+# Windows COM helper — must be called once per thread before using pycaw
+# ---------------------------------------------------------------------------
+
+_win_com_local = threading.local()
+
+def _win_ensure_com() -> None:
+    if not getattr(_win_com_local, "done", False):
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+            _win_com_local.done = True
+        except Exception:
+            pass
 
 
 # ===========================================================================
@@ -124,6 +140,19 @@ def send_media_key(action: str) -> None:
     Send a system media key.
     action: 'play_pause' | 'next' | 'previous'
     """
+    if _PLATFORM == "Windows":
+        # WM_APPCOMMAND is more reliable than pynput on Windows
+        try:
+            import ctypes
+            # APPCOMMAND values: play_pause=14, next=11, previous=12
+            _cmd = {"play_pause": 14, "next": 11, "previous": 12}.get(action)
+            if _cmd is not None:
+                HWND_BROADCAST = 0xFFFF
+                WM_APPCOMMAND = 0x0319
+                ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0, _cmd << 16)
+            return
+        except Exception as exc:
+            print(f"[media] WM_APPCOMMAND({action}): {exc}")
     try:
         from pynput.keyboard import Key, Controller
         key_map = {
@@ -243,6 +272,7 @@ def _proc_matches(proc_name: str, app_name: str) -> bool:
 # ===========================================================================
 
 def _win_set_output_volume(value: float) -> None:
+    _win_ensure_com()
     try:
         from ctypes import cast, POINTER
         from comtypes import CLSCTX_ALL
@@ -255,6 +285,7 @@ def _win_set_output_volume(value: float) -> None:
 
 
 def _win_get_output_volume() -> float:
+    _win_ensure_com()
     try:
         from ctypes import cast, POINTER
         from comtypes import CLSCTX_ALL
@@ -267,6 +298,7 @@ def _win_get_output_volume() -> float:
 
 
 def _win_set_mic_volume(value: float) -> None:
+    _win_ensure_com()
     try:
         from ctypes import cast, POINTER
         from comtypes import CLSCTX_ALL
@@ -284,6 +316,7 @@ def _win_set_mic_volume(value: float) -> None:
 
 
 def _win_get_mic_volume() -> float:
+    _win_ensure_com()
     try:
         from ctypes import cast, POINTER
         from comtypes import CLSCTX_ALL

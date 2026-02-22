@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import platform
+import socket
 import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
-    QPushButton, QRadioButton, QSizePolicy, QSpinBox, QSystemTrayIcon,
-    QTabWidget, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QRadioButton, QSizePolicy, QSpinBox,
+    QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .config import Config
@@ -255,6 +256,15 @@ class PadButton(QPushButton):
         "mute_mic":         "🎙 Mute",
     }
 
+    def flash(self) -> None:
+        """Briefly flash the button to indicate a press."""
+        orig = self.styleSheet()
+        self.setStyleSheet(
+            "QPushButton { background: #2a5a2a; border: 1px solid #4dffaa; "
+            "border-radius: 8px; color: #4dffaa; font-size: 10px; padding: 4px 2px; }"
+        )
+        QTimer.singleShot(120, lambda: self.setStyleSheet(orig))
+
     def set_action(self, action: dict) -> None:
         atype = action.get("type", "none")
         name = action.get("name", "").strip()
@@ -487,6 +497,68 @@ class PadConfigDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# VolumeOverlay
+# ---------------------------------------------------------------------------
+
+class VolumeOverlay(QWidget):
+    """Floating volume flyout that auto-hides after 1.5 s of inactivity."""
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFixedSize(240, 72)
+        self.setStyleSheet("""
+            QWidget { background: #1a1a2a; border: 1px solid #303050; border-radius: 8px; }
+            QLabel#title { color: #888; font-size: 11px; }
+            QLabel#pct { color: #4dffaa; font-size: 20px; font-weight: bold; }
+            QProgressBar {
+                background: #252525; border: none; border-radius: 4px; height: 8px;
+            }
+            QProgressBar::chunk { background: #4dffaa; border-radius: 4px; }
+        """)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(6)
+
+        self._title = QLabel("")
+        self._title.setObjectName("title")
+        layout.addWidget(self._title)
+
+        row = QHBoxLayout()
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(8)
+        row.addWidget(self._bar, 1)
+        self._pct = QLabel("0%")
+        self._pct.setObjectName("pct")
+        self._pct.setFixedWidth(50)
+        self._pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self._pct)
+        layout.addLayout(row)
+
+    def show_volume(self, label: str, value: float) -> None:
+        pct = int(value * 100)
+        self._title.setText(label)
+        self._bar.setValue(pct)
+        self._pct.setText(f"{pct}%")
+        self._position()
+        self.show()
+        self.raise_()
+        self._timer.start(1500)
+
+    def _position(self) -> None:
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move(geo.right() - self.width() - 20, geo.bottom() - self.height() - 20)
+
+
+# ---------------------------------------------------------------------------
 # ProgramSwitcherDialog
 # ---------------------------------------------------------------------------
 
@@ -497,6 +569,8 @@ class ProgramSwitcherDialog(QDialog):
     close with BROWSE_LOAD deck 2.
     Volume of the selected app is controlled by the MASTER_LEVEL knob.
     """
+
+    _apps_cache: list[str] = []  # class-level cache shared across instances
 
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
@@ -515,6 +589,10 @@ class ProgramSwitcherDialog(QDialog):
 
         self._build_ui()
         self._position_on_screen()
+        # Pre-populate from cache immediately, then refresh in background
+        if ProgramSwitcherDialog._apps_cache:
+            self._set_apps(ProgramSwitcherDialog._apps_cache)
+        self._start_bg_refresh()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -581,18 +659,48 @@ class ProgramSwitcherDialog(QDialog):
             geo = screen.availableGeometry()
             self.move(geo.center().x() - self.width() // 2, geo.top() + 40)
 
+    # --- Internal helpers ---
+
+    def _set_apps(self, apps: list[str]) -> None:
+        prev = self._selected_app
+        self._apps = apps
+        self._list.clear()
+        if platform.system() == "Windows":
+            from PySide6.QtWidgets import QFileIconProvider
+            from PySide6.QtCore import QFileInfo
+            _icon_provider = QFileIconProvider()
+        for app in apps:
+            from PySide6.QtWidgets import QListWidgetItem
+            item = QListWidgetItem(app)
+            self._list.addItem(item)
+        if apps:
+            # Restore previous selection if possible
+            try:
+                idx = apps.index(prev)
+            except ValueError:
+                idx = 0
+            self._selected = idx
+            self._list.setCurrentRow(idx)
+            self._selected_app = apps[idx]
+
+    def _start_bg_refresh(self) -> None:
+        import threading
+        def _worker():
+            from . import system_control
+            apps = system_control.get_open_apps()
+            ProgramSwitcherDialog._apps_cache = apps
+            # Use a single-shot timer to update UI on main thread
+            QTimer.singleShot(0, lambda: self._set_apps(apps) if self.isVisible() or not self._apps else None)
+        threading.Thread(target=_worker, daemon=True).start()
+
     # --- Public methods called from MainWindow ---
 
     def refresh_apps(self) -> None:
+        """Show cached apps immediately and refresh in background."""
         from . import system_control
-        self._apps = system_control.get_open_apps()
-        self._list.clear()
-        for app in self._apps:
-            self._list.addItem(app)
-        if self._apps:
-            self._selected = 0
-            self._list.setCurrentRow(0)
-            self._selected_app = self._apps[0]
+        if not self._apps and ProgramSwitcherDialog._apps_cache:
+            self._set_apps(ProgramSwitcherDialog._apps_cache)
+        self._start_bg_refresh()
 
     def move_selection(self, steps: int) -> None:
         if not self._apps:
@@ -652,6 +760,61 @@ def _find_combo_index(options: list, value) -> int:
         if v == value:
             return i
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Windows autostart helpers
+# ---------------------------------------------------------------------------
+
+_AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_NAME = "flx4control"
+
+
+def _get_autostart() -> str:
+    """Return 'off', 'on', or 'minimized'."""
+    if platform.system() != "Windows":
+        return "off"
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY) as k:
+            val, _ = winreg.QueryValueEx(k, _AUTOSTART_NAME)
+            if "--minimized" in val:
+                return "minimized"
+            return "on"
+    except Exception:
+        return "off"
+
+
+def _set_autostart(mode: str) -> None:
+    """mode: 'off' | 'on' | 'minimized'"""
+    if platform.system() != "Windows":
+        return
+    try:
+        import winreg
+        import sys
+        exe = sys.executable
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if mode == "off":
+                try:
+                    winreg.DeleteValue(k, _AUTOSTART_NAME)
+                except FileNotFoundError:
+                    pass
+            elif mode == "on":
+                winreg.SetValueEx(k, _AUTOSTART_NAME, 0, winreg.REG_SZ, f'"{exe}" -m flx4control')
+            elif mode == "minimized":
+                winreg.SetValueEx(k, _AUTOSTART_NAME, 0, winreg.REG_SZ, f'"{exe}" -m flx4control --minimized')
+    except Exception as exc:
+        print(f"[autostart] {exc}")
+
+
+def _mark_autostart_menu(off_act: QAction, on_act: QAction, min_act: QAction) -> None:
+    state = _get_autostart()
+    off_act.setCheckable(True)
+    on_act.setCheckable(True)
+    min_act.setCheckable(True)
+    off_act.setChecked(state == "off")
+    on_act.setChecked(state == "on")
+    min_act.setChecked(state == "minimized")
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +1124,23 @@ class MainWindow(QMainWindow):
         reconnect_act.triggered.connect(self._reconnect)
         menu.addAction(reconnect_act)
 
+        # Autostart submenu (Windows only)
+        if platform.system() == "Windows":
+            menu.addSeparator()
+            autostart_menu = QMenu("Autostart", menu)
+            off_act = QAction("Off", self)
+            on_act = QAction("On (normal)", self)
+            min_act = QAction("On (minimized)", self)
+            off_act.triggered.connect(lambda: _set_autostart("off"))
+            on_act.triggered.connect(lambda: _set_autostart("on"))
+            min_act.triggered.connect(lambda: _set_autostart("minimized"))
+            autostart_menu.addAction(off_act)
+            autostart_menu.addAction(on_act)
+            autostart_menu.addAction(min_act)
+            # Check mark on current state
+            _mark_autostart_menu(off_act, on_act, min_act)
+            menu.addMenu(autostart_menu)
+
         menu.addSeparator()
         quit_act = QAction("Quit", self)
         quit_act.triggered.connect(self._quit)
@@ -974,13 +1154,18 @@ class MainWindow(QMainWindow):
         self.bridge.controller_connected.connect(self._on_connected)
         self.bridge.controller_disconnected.connect(self._on_disconnected)
         self.bridge.tab_changed.connect(self._on_tab_changed)
+        self.bridge.pad_triggered.connect(self._on_pad_triggered)
         self.bridge.browse_turned.connect(self._on_browse_turned)
         self.bridge.program_load_pressed.connect(self._on_program_load)
         self.bridge.master_level_changed.connect(self._on_master_level)
         self.bridge.play_state_changed.connect(self._on_play_state_changed)
+        self.bridge.volume_changed.connect(self._on_volume_changed)
 
         # Program switcher instance (created on demand)
         self._prog_switcher: Optional[ProgramSwitcherDialog] = None
+
+        # Volume overlay
+        self._vol_overlay = VolumeOverlay()
 
     # ------------------------------------------------------------------
     # Slots
@@ -1002,6 +1187,22 @@ class MainWindow(QMainWindow):
         b1 = self.bridge.current_bank(1) + 1
         b2 = self.bridge.current_bank(2) + 1
         self.bank_label.setText(f"Deck 1: Bank {b1}  |  Deck 2: Bank {b2}")
+        # Switch the visible bank tab to match the controller
+        self.bank_tabs.setCurrentIndex(tab)
+
+    @Slot(int, int)
+    def _on_pad_triggered(self, deck: int, pad: int) -> None:
+        """Flash the pad in the GUI. If no action is configured, open config dialog."""
+        bank = self.bridge.current_bank(deck)
+        # Switch tab to the active bank
+        self.bank_tabs.setCurrentIndex(bank)
+        btn = self.pad_buttons.get((bank, deck, pad))
+        if btn:
+            btn.flash()
+        # If pad has no action and the window is visible, open config
+        action = self.config.get_pad_action(deck, bank, pad)
+        if action.get("type", "none") == "none" and self.isVisible():
+            self._open_pad_config(deck, bank, pad)
 
     @Slot(int, int, int)
     def _open_pad_config(self, deck: int, bank: int, pad: int) -> None:
@@ -1064,6 +1265,10 @@ class MainWindow(QMainWindow):
     def _on_master_level(self, value: float) -> None:
         if self._prog_switcher and self._prog_switcher.isVisible():
             self._prog_switcher.set_app_volume(value)
+
+    @Slot(str, float)
+    def _on_volume_changed(self, label: str, value: float) -> None:
+        self._vol_overlay.show_volume(label, value)
 
     @Slot(bool)
     def _on_play_state_changed(self, playing: bool) -> None:
@@ -1228,12 +1433,16 @@ def _guide_label(text: str) -> QLabel:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    # macOS: suppress pyautogui safety fail (cursor in corner)
+    # Single-instance guard: bind a local TCP port; second instance exits
+    _lock_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        import pyautogui
-        pyautogui.FAILSAFE = False
-    except ImportError:
-        pass
+        _lock_sock.bind(("127.0.0.1", 47389))
+        _lock_sock.listen(1)
+    except OSError:
+        print("[flx4control] Already running.")
+        return 0
+
+    start_minimized = "--minimized" in sys.argv
 
     app = QApplication(sys.argv)
     app.setApplicationName("FLX4 Control")
@@ -1255,14 +1464,17 @@ def main() -> int:
     )
 
     window = MainWindow(config, bridge)
-    window.show()
+    if not start_minimized:
+        window.show()
 
     # Show Windows driver guide on first launch
     if platform.system() == "Windows" and not config.is_driver_guide_shown():
+        window.show()
         dlg = WindowsDriverGuideDialog(window)
         dlg.exec()
         config.mark_driver_guide_shown()
 
     ret = app.exec()
     bridge.stop()
+    _lock_sock.close()
     return ret

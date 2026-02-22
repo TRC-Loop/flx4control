@@ -32,6 +32,9 @@ class ControllerBridge(QObject):
     master_level_changed = Signal(float)  # 0.0–1.0
     play_state_changed = Signal(bool)   # True = playing
 
+    # --- Volume feedback (label, 0.0–1.0) ---
+    volume_changed = Signal(str, float)
+
     def __init__(self, config: Config, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self.config = config
@@ -45,6 +48,10 @@ class ControllerBridge(QObject):
         self._is_playing: bool = False
         self._mic_muted: bool = False
         self._mic_volume: float = 1.0   # last volume set via fader
+
+        # Sound toggle tracking (filename → is currently playing)
+        self._last_sound_file: str = ""
+        self._sound_playing: bool = False
 
         # Mic loopback (crossfader → hear yourself)
         self._loopback = MicLoopback()
@@ -127,16 +134,21 @@ class ControllerBridge(QObject):
 
                 # Heartbeat loop: also updates VU meters
                 _tick = 0
+                _hb_fails = 0
                 while self._running:
                     time.sleep(0.1)  # 10 Hz
                     _tick += 1
 
                     # Connectivity check every 2 s (every 20 ticks)
+                    # Require 3 consecutive failures to avoid spurious disconnects
                     if _tick % 20 == 0:
                         try:
                             ctrl.leds.set_button("BROWSE_PRESS", on=False)
+                            _hb_fails = 0
                         except Exception:
-                            break   # USB disconnected
+                            _hb_fails += 1
+                            if _hb_fails >= 3:
+                                break   # USB disconnected
 
                     # VU meters at 5 Hz (every 2 ticks)
                     if _tick % 2 == 0:
@@ -266,10 +278,12 @@ class ControllerBridge(QObject):
             mic_cfg = self.config.get_mic_fader()
             if vol_cfg.get("control") == "CH_FADER" and event.deck == vol_cfg.get("deck"):
                 system_control.set_output_volume(event.value)
+                self.volume_changed.emit("Output Volume", event.value)
             if mic_cfg.get("control") == "CH_FADER" and event.deck == mic_cfg.get("deck"):
                 self._mic_volume = event.value
                 if not self._mic_muted:
                     system_control.set_mic_volume(event.value)
+                    self.volume_changed.emit("Mic Volume", event.value)
 
         # ---- Master Level knob → output volume (if configured) + signal ----
         @ctrl.on_knob("MASTER_LEVEL")
@@ -277,6 +291,7 @@ class ControllerBridge(QObject):
             vol_cfg = self.config.get_volume_fader()
             if vol_cfg.get("control") == "MASTER_LEVEL":
                 system_control.set_output_volume(event.value)
+                self.volume_changed.emit("Output Volume", event.value)
             self.master_level_changed.emit(event.value)
 
         # ---- Crossfader → mic loopback (hear yourself) ----
@@ -363,8 +378,17 @@ class ControllerBridge(QObject):
     def _play_sound(self, filename: str) -> None:
         if not filename:
             return
+        # Toggle: pressing the same sound again stops it
+        if self._sound_playing and self._last_sound_file == filename:
+            audio_player.stop_all()
+            self._sound_playing = False
+            self._last_sound_file = ""
+            return
         path = self.config.resolve_sound_path(filename)
         if path:
+            audio_player.stop_all()
             audio_player.play_sound(path)
+            self._sound_playing = True
+            self._last_sound_file = filename
         else:
             print(f"[controller] Sound not found: {filename}")
