@@ -13,13 +13,13 @@ from the hardware pads and knobs you already have.
 Run this in **PowerShell** (no admin needed for the AppData option):
 
 ```powershell
-iwr https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.bat -OutFile "$env:TEMP\flx4_install.bat"; Start-Process "$env:TEMP\flx4_install.bat"
+iwr https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.ps1 -OutFile "$env:TEMP\flx4_install.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\flx4_install.ps1"
 ```
 
-Or run this in **Command Prompt**:
+Or this for command prompt
 
 ```cmd
-curl -fsSL -o "%TEMP%\flx4_install.bat" https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.bat && "%TEMP%\flx4_install.bat"
+curl -fsSL -o "%TEMP%\flx4_install.ps1" https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.ps1 && powershell -ExecutionPolicy Bypass -File "%TEMP%\flx4_install.ps1"
 ```
 
 The installer will ask whether to install to **AppData** (no admin required) or
@@ -30,7 +30,6 @@ The installer will ask whether to install to **AppData** (no admin required) or
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/TRC-Loop/flx4control/main/install.sh)
 ```
-
 ---
 
 ## Uninstall
