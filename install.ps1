@@ -13,9 +13,8 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 
 # ---------------------------------------------------------------------------
-# Bootstrap: if we're not running from the full repo, download it first.
-# Handles: iwr url | iex  AND  single-file download to %TEMP%
-# Detection: main.py must be present next to this script.
+# Bootstrap: if main.py is not next to this script, we were downloaded as a
+# single file. Download the full repo ZIP and re-launch from there.
 # ---------------------------------------------------------------------------
 if (-not (Test-Path (Join-Path $PSScriptRoot "main.py"))) {
 
@@ -42,7 +41,7 @@ if (-not (Test-Path (Join-Path $PSScriptRoot "main.py"))) {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Find Python 3.10 – 3.12
+# 1. Find Python
 # ---------------------------------------------------------------------------
 Write-Host "[1/7] Checking Python..." -ForegroundColor Green
 
@@ -77,7 +76,7 @@ if ($LASTEXITCODE -ne 0) {
     pause; exit 1
 }
 
-# Warn on Python 3.13+ — no pre-built python-rtmidi wheel
+# Warn on Python 3.13+ -- no pre-built python-rtmidi wheel
 $pyMinor = [int](& $pythonCmd -c "import sys; print(sys.version_info.minor)" 2>&1)
 $pyMajor = [int](& $pythonCmd -c "import sys; print(sys.version_info.major)" 2>&1)
 if ($pyMajor -ge 3 -and $pyMinor -ge 13) {
@@ -96,7 +95,7 @@ if (-not $Target) {
     Write-Host ""
     Write-Host "Where would you like to install FLX4 Control?" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  1. AppData (recommended — no Admin required)"
+    Write-Host "  1. AppData (recommended - no Admin required)"
     Write-Host "     $env:LOCALAPPDATA\Programs\flx4control"
     Write-Host ""
     Write-Host "  2. Program Files (requires Admin)"
@@ -185,7 +184,7 @@ Write-Host "[4/7] Upgrading pip..." -ForegroundColor Green
 Write-Host ""
 Write-Host "[5/7] Installing dependencies..." -ForegroundColor Green
 
-Write-Host "  python-rtmidi (binary only — no C compiler required)..."
+Write-Host "  python-rtmidi (binary only - no C compiler required)..."
 & $venvPy -m pip install "python-rtmidi>=1.5.8" --only-binary :all:
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -195,7 +194,7 @@ if ($LASTEXITCODE -ne 0) {
     pause; exit 1
 }
 
-Write-Host "  Remaining packages..."
+Write-Host "  Installing remaining packages..."
 & $venvPy -m pip install `
     "PySide6>=6.5" `
     "mido>=1.3.3,<2.0.0" `
@@ -224,7 +223,7 @@ if (Test-Path $iconScript) {
     & $venvPy $iconScript $installDir
     Write-Host "  Icon generated."
 } else {
-    Write-Host "  generate_icon.py not found — skipping."
+    Write-Host "  generate_icon.py not found - skipping."
 }
 
 # ---------------------------------------------------------------------------
@@ -234,29 +233,26 @@ Write-Host ""
 Write-Host "[7/7] Creating launcher and desktop shortcut..." -ForegroundColor Green
 
 $launcher = Join-Path $installDir "FLX4Control.bat"
-@"
-@echo off
-start "" "$venvDir\Scripts\pythonw.exe" "$installDir\main.py"
-"@ | Set-Content $launcher -Encoding ASCII
+$launcherContent = "@echo off`r`nstart `"`" `"$venvDir\Scripts\pythonw.exe`" `"$installDir\main.py`""
+[System.IO.File]::WriteAllText($launcher, $launcherContent, [System.Text.Encoding]::ASCII)
 
-# VBScript — most reliable shortcut method across all Windows versions
+# VBScript shortcut - most reliable across all Windows versions
 $vbsPath      = Join-Path $env:TEMP "flx4_shortcut_$PID.vbs"
 $shortcutPath = "$env:USERPROFILE\Desktop\FLX4 Control.lnk"
 $iconFile     = Join-Path $installDir "flx4control.ico"
 
-$vbs = @(
-    'Set oWS = CreateObject("WScript.Shell")'
-    "Set oLink = oWS.CreateShortcut(`"$shortcutPath`")"
-    "oLink.TargetPath = `"$launcher`""
-    "oLink.WorkingDirectory = `"$installDir`""
-    'oLink.Description = "FLX4 Control"'
-)
+$vbs = New-Object System.Collections.Generic.List[string]
+$vbs.Add('Set oWS = CreateObject("WScript.Shell")')
+$vbs.Add("Set oLink = oWS.CreateShortcut(""$shortcutPath"")")
+$vbs.Add("oLink.TargetPath = ""$launcher""")
+$vbs.Add("oLink.WorkingDirectory = ""$installDir""")
+$vbs.Add('oLink.Description = "FLX4 Control"')
 if (Test-Path $iconFile) {
-    $vbs += "oLink.IconLocation = `"$iconFile,0`""
+    $vbs.Add("oLink.IconLocation = ""$iconFile,0""")
 }
-$vbs += "oLink.Save"
+$vbs.Add("oLink.Save")
 
-$vbs | Set-Content $vbsPath -Encoding ASCII
+[System.IO.File]::WriteAllLines($vbsPath, $vbs, [System.Text.Encoding]::ASCII)
 cscript //nologo $vbsPath
 Remove-Item $vbsPath -ErrorAction SilentlyContinue
 
