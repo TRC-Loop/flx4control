@@ -141,18 +141,19 @@ def send_media_key(action: str) -> None:
     action: 'play_pause' | 'next' | 'previous'
     """
     if _PLATFORM == "Windows":
-        # WM_APPCOMMAND is more reliable than pynput on Windows
+        # keybd_event with VK_MEDIA_* is instant and non-blocking.
+        # SendMessageW(HWND_BROADCAST) broadcasts to every window synchronously
+        # and can block the calling thread for several seconds — avoid it.
         try:
             import ctypes
-            # APPCOMMAND values: play_pause=14, next=11, previous=12
-            _cmd = {"play_pause": 14, "next": 11, "previous": 12}.get(action)
-            if _cmd is not None:
-                HWND_BROADCAST = 0xFFFF
-                WM_APPCOMMAND = 0x0319
-                ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0, _cmd << 16)
+            VK = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1}.get(action)
+            if VK is not None:
+                KEYEVENTF_KEYUP = 0x0002
+                ctypes.windll.user32.keybd_event(VK, 0, 0, 0)              # key down
+                ctypes.windll.user32.keybd_event(VK, 0, KEYEVENTF_KEYUP, 0)  # key up
             return
         except Exception as exc:
-            print(f"[media] WM_APPCOMMAND({action}): {exc}")
+            print(f"[media] keybd_event({action}): {exc}")
     try:
         from pynput.keyboard import Key, Controller
         key_map = {

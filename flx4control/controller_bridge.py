@@ -53,6 +53,14 @@ class ControllerBridge(QObject):
         self._last_sound_file: str = ""
         self._sound_playing: bool = False
 
+        # Jog deadzone: accumulate ticks, only scroll after threshold
+        self._jog_accum: dict[int, int] = {1: 0, 2: 0}
+
+        # Lock to serialise all MIDI output writes across threads.
+        # The heartbeat thread and the flx4py listener thread both write to
+        # the same MIDI output port; concurrent writes corrupt the stream.
+        self._midi_lock = threading.Lock()
+
         # Mic loopback (crossfader → hear yourself)
         self._loopback = MicLoopback()
 
@@ -143,7 +151,8 @@ class ControllerBridge(QObject):
                     # Require 3 consecutive failures to avoid spurious disconnects
                     if _tick % 20 == 0:
                         try:
-                            ctrl.leds.set_button("BROWSE_PRESS", on=False)
+                            with self._midi_lock:
+                                ctrl.leds.set_button("BROWSE_PRESS", on=False)
                             _hb_fails = 0
                         except Exception:
                             _hb_fails += 1
@@ -153,8 +162,11 @@ class ControllerBridge(QObject):
                     # VU meters at 5 Hz (every 2 ticks)
                     if _tick % 2 == 0:
                         try:
-                            ctrl.leds.set_level_meter(1, system_control.get_output_volume())
-                            ctrl.leds.set_level_meter(2, system_control.get_mic_volume())
+                            v_out = system_control.get_output_volume()
+                            v_mic = system_control.get_mic_volume()
+                            with self._midi_lock:
+                                ctrl.leds.set_level_meter(1, v_out)
+                                ctrl.leds.set_level_meter(2, v_mic)
                         except Exception:
                             pass
 
@@ -185,7 +197,11 @@ class ControllerBridge(QObject):
         ctrl = self._controller
         if not ctrl:
             return
-        ctrl.leds.all_off()
+        with self._midi_lock:
+            try:
+                ctrl.leds.all_off()
+            except Exception:
+                pass
         for deck in (1, 2):
             bank = self._current_bank[deck]
             self._update_tab_leds(deck, bank)
@@ -198,7 +214,8 @@ class ControllerBridge(QObject):
             return
         for tab in range(4):
             try:
-                ctrl.leds.set_tab(deck, tab, tab == active_bank)
+                with self._midi_lock:
+                    ctrl.leds.set_tab(deck, tab, tab == active_bank)
             except Exception:
                 pass
 
@@ -210,7 +227,8 @@ class ControllerBridge(QObject):
             action = self.config.get_pad_action(deck, bank, pad)
             lit = self._action_led_state(action)
             try:
-                ctrl.leds.set_pad(deck, pad, lit)
+                with self._midi_lock:
+                    ctrl.leds.set_pad(deck, pad, lit)
             except Exception:
                 pass
 
@@ -228,7 +246,8 @@ class ControllerBridge(QObject):
             return
         for deck in (1, 2):
             try:
-                ctrl.leds.set_button("PLAY_PAUSE", on=self._is_playing, deck=deck)
+                with self._midi_lock:
+                    ctrl.leds.set_button("PLAY_PAUSE", on=self._is_playing, deck=deck)
             except Exception:
                 pass
 
@@ -300,16 +319,24 @@ class ControllerBridge(QObject):
             self._loopback.set_monitor_volume(event.value)
 
         # ---- Jog wheels ----
+        _JOG_DEADZONE = 4  # ticks required before first scroll fires
+
         @ctrl.on_jog()
         def on_jog(event: flx4py.JogEvent) -> None:
             scroll_deck = self.config.get_scroll_deck()
             if scroll_deck != 0 and event.deck == scroll_deck:
-                # Scroll
-                sensitivity = self.config.get_scroll_sensitivity()
-                direction = event.direction
-                if self.config.get_scroll_reverse():
-                    direction = -direction
-                system_control.do_scroll(direction, sensitivity)
+                # Accumulate ticks; only scroll once the deadzone is cleared.
+                # After firing, reset accumulator so the next scroll also
+                # requires deadzone ticks — this prevents runaway fast-scroll.
+                accum = self._jog_accum.get(event.deck, 0) + event.direction
+                if abs(accum) >= _JOG_DEADZONE:
+                    direction = 1 if accum > 0 else -1
+                    if self.config.get_scroll_reverse():
+                        direction = -direction
+                    sensitivity = self.config.get_scroll_sensitivity()
+                    system_control.do_scroll(direction, sensitivity)
+                    accum = 0  # reset after firing
+                self._jog_accum[event.deck] = accum
             else:
                 # Media seek (the other jog wheel)
                 system_control.seek_media(event.direction)
