@@ -136,7 +136,15 @@ Get-Process -Name pythonw -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
-# 3. Copy application files
+# 3. Wipe existing install directory for a clean install
+# ---------------------------------------------------------------------------
+if (Test-Path $installDir) {
+    Write-Host "  Removing existing installation at $installDir ..."
+    Remove-Item $installDir -Recurse -Force
+}
+
+# ---------------------------------------------------------------------------
+# 4. Copy application files
 # ---------------------------------------------------------------------------
 Write-Host "[2/7] Copying application files..." -ForegroundColor Green
 
