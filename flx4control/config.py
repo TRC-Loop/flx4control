@@ -46,6 +46,11 @@ _DEFAULT_BANKS: dict = {
     "deck2": {"0": {}, "1": {}, "2": {}, "3": {}},
 }
 
+_DEFAULT_BUTTON_ACTIONS: dict = {
+    "deck1": {"PLAY_PAUSE": {"type": "media_play_pause"}, "CUE": {"type": "none"}},
+    "deck2": {"PLAY_PAUSE": {"type": "media_play_pause"}, "CUE": {"type": "none"}},
+}
+
 DEFAULT_CONFIG: dict = {
     "version": 1,
     "banks": _DEFAULT_BANKS,
@@ -58,6 +63,8 @@ DEFAULT_CONFIG: dict = {
     # Audio device names (None = system default)
     "audio_input_device": None,
     "audio_output_device": None,
+    # Physical deck button actions (PLAY_PAUSE, CUE per deck)
+    "button_actions": _DEFAULT_BUTTON_ACTIONS,
     # One-time guides
     "windows_driver_guide_shown": False,
 }
@@ -89,11 +96,17 @@ class Config:
             self._data = json.loads(json.dumps(DEFAULT_CONFIG))
             self.save()
         self._ensure_bank_structure()
+        self._ensure_button_structure()
 
     def save(self) -> None:
         path = get_config_path()
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2)
+
+    def _ensure_button_structure(self) -> None:
+        ba = self._data.setdefault("button_actions", {})
+        for dk in ("deck1", "deck2"):
+            ba.setdefault(dk, {})
 
     def _ensure_bank_structure(self) -> None:
         banks = self._data.setdefault("banks", {})
@@ -121,6 +134,31 @@ class Config:
             bank_pads.pop(str(pad), None)
         else:
             bank_pads[str(pad)] = action
+        self.save()
+
+    # --- deck button actions ---
+
+    _BUTTON_DEFAULTS: dict = {
+        "PLAY_PAUSE": {"type": "media_play_pause"},
+        "CUE": {"type": "none"},
+    }
+
+    def get_button_action(self, deck: int, button: str) -> dict:
+        """Get the action for a physical button (PLAY_PAUSE, CUE) on a deck."""
+        return (
+            self._data
+            .get("button_actions", {})
+            .get(f"deck{deck}", {})
+            .get(button, self._BUTTON_DEFAULTS.get(button, {"type": "none"}))
+        )
+
+    def set_button_action(self, deck: int, button: str, action: dict) -> None:
+        ba = self._data.setdefault("button_actions", {})
+        dk = ba.setdefault(f"deck{deck}", {})
+        if action.get("type", "none") == "none":
+            dk.pop(button, None)
+        else:
+            dk[button] = action
         self.save()
 
     # --- fader / volume ---

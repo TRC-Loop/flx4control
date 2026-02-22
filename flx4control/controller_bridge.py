@@ -135,8 +135,8 @@ class ControllerBridge(QObject):
                     except Exception:
                         pass
 
-            except RuntimeError:
-                pass   # device not found yet
+            except RuntimeError as exc:
+                print(f"[controller] {exc}")  # shows available MIDI ports
             except Exception as exc:
                 print(f"[controller] {exc}")
             finally:
@@ -236,10 +236,17 @@ class ControllerBridge(QObject):
             self._update_pad_leds(deck, tab)
             self.tab_changed.emit(deck, tab)
 
-        # ---- PLAY/PAUSE button → media control ----
+        # ---- PLAY/PAUSE button → configurable action ----
         @ctrl.on_button("PLAY_PAUSE", pressed=True)
         def on_play_pause(event: flx4py.ButtonEvent) -> None:
-            self._toggle_play_pause()
+            action = self.config.get_button_action(event.deck, "PLAY_PAUSE")
+            self._execute_action(action)
+
+        # ---- CUE button → configurable action ----
+        @ctrl.on_button("CUE", pressed=True)
+        def on_cue(event: flx4py.ButtonEvent) -> None:
+            action = self.config.get_button_action(event.deck, "CUE")
+            self._execute_action(action)
 
         # ---- Channel faders → output / mic volume ----
         @ctrl.on_knob("CH_FADER")

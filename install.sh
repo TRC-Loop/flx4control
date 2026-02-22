@@ -30,6 +30,7 @@ find_python() {
     return 1
 }
 
+echo "[1/6] Checking Python…"
 PYTHON=$(find_python) || {
     echo ""
     echo "ERROR: Python 3.10 or newer is required."
@@ -38,37 +39,68 @@ PYTHON=$(find_python) || {
 }
 
 PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
-echo "  Python    : $PY_VERSION ($PYTHON)"
+echo "  Found: $PY_VERSION ($PYTHON)"
 echo ""
 
 # --- Virtual environment ----------------------------------------------------
+echo "[2/6] Setting up virtual environment…"
 if [ -d "$VENV_DIR" ]; then
-    echo "→ Updating existing virtual environment…"
-else
-    echo "→ Creating virtual environment…"
-    "$PYTHON" -m venv "$VENV_DIR"
+    echo "  Removing existing venv for clean reinstall…"
+    rm -rf "$VENV_DIR"
 fi
+echo "  Creating virtual environment…"
+"$PYTHON" -m venv "$VENV_DIR"
 
 PIP="$VENV_DIR/bin/pip"
 PYTHON_VENV="$VENV_DIR/bin/python"
 
-echo "→ Upgrading pip…"
-"$PIP" install --upgrade pip --quiet
+echo ""
+echo "[3/6] Upgrading pip…"
+"$PIP" install --upgrade pip
 
 # --- Dependencies -----------------------------------------------------------
-echo "→ Installing / updating dependencies…"
-"$PIP" install \
-    "flx4py" \
-    "PySide6>=6.5" \
-    "pygame>=2.0" \
-    "pyautogui" \
-    "pynput" \
-    "sounddevice" \
-    --quiet
+echo ""
+echo "[4/6] Installing dependencies…"
+echo ""
+echo "  --- GUI framework (PySide6) ---"
+"$PIP" install "PySide6>=6.5"
 
-echo "  Done."
+echo ""
+echo "  --- MIDI backend (mido + python-rtmidi) ---"
+"$PIP" install "mido>=1.3.3,<2.0.0" "python-rtmidi>=1.5.8"
+
+echo ""
+echo "  --- Audio (pygame + sounddevice) ---"
+"$PIP" install "pygame>=2.0" "sounddevice"
+
+echo ""
+echo "  --- Input control (pyautogui + pynput) ---"
+"$PIP" install "pyautogui" "pynput"
+
+echo ""
+echo "  --- flx4py (controller library) ---"
+LOCAL_FLX4PY="$(dirname "$SCRIPT_DIR")/flx4py"
+if [ -f "$LOCAL_FLX4PY/pyproject.toml" ]; then
+    echo "  Installing from local source: $LOCAL_FLX4PY"
+    "$PIP" install "$LOCAL_FLX4PY"
+else
+    echo "  Installing from GitHub…"
+    "$PIP" install "git+https://github.com/TRC-Loop/flx4py.git"
+fi
+
+echo ""
+echo "[5/6] Generating app icon…"
+if [ -f "$SCRIPT_DIR/generate_icon.py" ]; then
+    "$PYTHON_VENV" "$SCRIPT_DIR/generate_icon.py" "$SCRIPT_DIR"
+else
+    echo "  generate_icon.py not found - skipping."
+fi
+
+echo ""
+echo "  All done."
 echo ""
 
+echo "[6/6] Creating launcher…"
 # --- Launcher script --------------------------------------------------------
 cat > "$LAUNCHER" << 'LAUNCH_EOF'
 #!/usr/bin/env bash

@@ -151,30 +151,53 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {
 # ---------------------------------------------------------------------------
 
 def make_icon() -> QIcon:
-    size = 64
-    pix = QPixmap(size, size)
-    pix.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    """App icon: dark circle, green ring, play triangle."""
+    from PySide6.QtGui import QPen, QPolygon
+    from PySide6.QtCore import QPoint
+    icon = QIcon()
+    for size in (16, 32, 48, 64, 128, 256):
+        pix = QPixmap(size, size)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Background
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#1a1a2e"))
+        p.drawEllipse(1, 1, size - 2, size - 2)
+        # Green ring
+        rw = max(1, size // 18)
+        p.setPen(QPen(QColor("#4dffaa"), rw))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        m = size // 8
+        p.drawEllipse(m, m, size - 2 * m, size - 2 * m)
+        # Play triangle
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#4dffaa"))
+        cx = size // 2 + size // 20
+        cy = size // 2
+        s = size // 5
+        poly = QPolygon([QPoint(cx - s, cy - s), QPoint(cx - s, cy + s), QPoint(cx + s, cy)])
+        p.drawPolygon(poly)
+        p.end()
+        icon.addPixmap(pix)
+    return icon
 
-    # Background circle
-    p.setBrush(QColor("#1a1a2e"))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(2, 2, size - 4, size - 4)
 
-    # 4 pad squares in a 2×2 grid
-    pad_sz = 18
-    gap = 5
-    ox = (size - 2 * pad_sz - gap) // 2
-    oy = (size - 2 * pad_sz - gap) // 2
-    colors = ["#4dffaa", "#4dffaa", "#4d9fff", "#4dffaa"]
-    for row in range(2):
-        for col in range(2):
-            c = QColor(colors[row * 2 + col])
-            p.setBrush(c)
-            p.drawRoundedRect(ox + col * (pad_sz + gap), oy + row * (pad_sz + gap), pad_sz, pad_sz, 3, 3)
-    p.end()
-    return QIcon(pix)
+def _action_label(action: dict) -> str:
+    """Human-readable label for an action dict."""
+    _LABELS = {
+        "none": "— none —",
+        "media_play_pause": "Media: Play / Pause",
+        "media_next": "Media: Next track",
+        "media_previous": "Media: Previous track",
+        "mute_mic": "Mute / Unmute mic",
+        "app": "Open app",
+        "sound": "Play sound",
+    }
+    atype = action.get("type", "none")
+    base = _LABELS.get(atype, atype)
+    name = action.get("name", "")
+    return f"{base}  ({name})" if name else base
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +730,27 @@ class SettingsWidget(QGroupBox):
         refresh_btn.clicked.connect(self._refresh_devices)
         form.addRow("", refresh_btn)
 
+        # --- Deck button actions ---
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep3)
+
+        self._btn_action_labels: dict[tuple, QLabel] = {}
+        for deck in (1, 2):
+            for btn_key, btn_display in (("PLAY_PAUSE", "Play/Pause"), ("CUE", "Cue")):
+                lbl = QLabel(_action_label(self.config.get_button_action(deck, btn_key)))
+                lbl.setStyleSheet("color: #aaa; min-width: 160px;")
+                cfg_btn = QPushButton("Configure…")
+                cfg_btn.setMaximumWidth(100)
+                def _make_handler(d=deck, b=btn_key, l=lbl):
+                    return lambda: self._configure_deck_button(d, b, l)
+                cfg_btn.clicked.connect(_make_handler())
+                row = QHBoxLayout()
+                row.addWidget(lbl, 1)
+                row.addWidget(cfg_btn)
+                form.addRow(f"Deck {deck} — {btn_display}:", row)
+                self._btn_action_labels[(deck, btn_key)] = lbl
+
         # Populate device lists
         self._refresh_devices()
 
@@ -786,6 +830,22 @@ class SettingsWidget(QGroupBox):
         name = self.output_dev_combo.itemData(idx)
         self.config.set_audio_output_device(name)
         self.bridge.set_audio_devices(self.config.get_audio_input_device(), name)
+
+    def _configure_deck_button(self, deck: int, button: str, label: QLabel) -> None:
+        action = self.config.get_button_action(deck, button)
+        dlg = PadConfigDialog(deck, 0, 0, action, self)
+        dlg.setWindowTitle(f"Deck {deck} — {button.replace('_', '/')}")
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_action = dlg.get_action()
+            if new_action.get("type") == "sound" and new_action.get("source_path"):
+                filename = self.config.import_sound_file(new_action["source_path"])
+                new_action = {
+                    "type": "sound",
+                    "name": new_action.get("name", ""),
+                    "file": filename,
+                }
+            self.config.set_button_action(deck, button, new_action)
+            label.setText(_action_label(new_action))
 
 
 # ---------------------------------------------------------------------------
@@ -1081,24 +1141,48 @@ class WindowsDriverGuideDialog(QDialog):
         root.addWidget(header)
 
         intro = QLabel(
-            "Before using the app, please make sure your DDJ-FLX4 is properly "
-            "set up on Windows. Follow the steps below if the controller is "
-            "shown as <b style='color:#ff6644'>Not connected</b>."
+            "Welcome! Here's what you need to know to get started on Windows."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #c0c0c0;")
         root.addWidget(intro)
 
         # Step 1
-        step1 = QGroupBox("Step 1 — Install the Pioneer DDJ-FLX4 driver")
+        step1 = QGroupBox("Step 1 — Connect the controller")
         s1l = QVBoxLayout(step1)
         s1l.addWidget(_guide_label(
-            "The DDJ-FLX4 requires the official Pioneer DJ USB-MIDI driver to "
-            "function correctly on Windows."
+            "The DDJ-FLX4 is <b>USB class-compliant</b> — no separate audio driver "
+            "is required on Windows 10 or 11. If it already works with Rekordbox, "
+            "it will work here too."
         ))
-        s1l.addWidget(_guide_label("1. Go to <b>pioneerdj.com</b> and search for <i>DDJ-FLX4 Software & Drivers</i>."))
-        s1l.addWidget(_guide_label("2. Download and run the Windows driver installer."))
-        s1l.addWidget(_guide_label("3. <b>Restart your computer</b> after installation."))
+        s1l.addWidget(_guide_label("1. Connect the DDJ-FLX4 to your PC with a USB cable."))
+        s1l.addWidget(_guide_label("2. Make sure the power switch on the controller is <b>ON</b>."))
+        s1l.addWidget(_guide_label(
+            "3. The app will detect it automatically within a few seconds and the "
+            "status in the top bar will change to <b style='color:#4dffaa'>Connected</b>."
+        ))
+        root.addWidget(step1)
+
+        # Step 2 — troubleshooting
+        step2 = QGroupBox("Still not connecting?")
+        s2l = QVBoxLayout(step2)
+        s2l.addWidget(_guide_label(
+            "If the controller stays <b style='color:#ff6644'>Not connected</b> even "
+            "though it is plugged in and powered on, try the following:"
+        ))
+        s2l.addWidget(_guide_label("• Try a different USB cable or a different USB port."))
+        s2l.addWidget(_guide_label(
+            "• Close Rekordbox (or any other DJ software) — only one app can use "
+            "the MIDI interface at a time."
+        ))
+        s2l.addWidget(_guide_label(
+            "• Open <b>Device Manager</b> (Win+X → Device Manager) and check that "
+            "<i>Pioneer DDJ-FLX4</i> appears under <i>Sound, video and game controllers</i>."
+        ))
+        s2l.addWidget(_guide_label(
+            "• If the device shows a yellow warning icon, visit "
+            "<b>pioneerdj.com</b> and download the Windows driver for the DDJ-FLX4."
+        ))
 
         open_btn = QPushButton("Open Pioneer DJ Support Page")
         open_btn.clicked.connect(lambda: __import__("webbrowser").open(
@@ -1109,28 +1193,16 @@ class WindowsDriverGuideDialog(QDialog):
             "border-radius: 4px; padding: 6px 14px; } "
             "QPushButton:hover { background: #1f4a1f; }"
         )
-        s1l.addWidget(open_btn)
-        root.addWidget(step1)
-
-        # Step 2
-        step2 = QGroupBox("Step 2 — Connect the controller")
-        s2l = QVBoxLayout(step2)
-        s2l.addWidget(_guide_label("1. Connect the DDJ-FLX4 to your PC with a USB cable."))
-        s2l.addWidget(_guide_label("2. Make sure the power switch on the controller is <b>ON</b>."))
-        s2l.addWidget(_guide_label(
-            "3. Open <b>Device Manager</b> (Win+X → Device Manager) and confirm that "
-            "<i>Pioneer DDJ-FLX4</i> appears under <i>Sound, video and game controllers</i> "
-            "or <i>USB devices</i>."
-        ))
+        s2l.addWidget(open_btn)
         root.addWidget(step2)
 
         # Step 3
-        step3 = QGroupBox("Step 3 — Select your audio devices")
+        step3 = QGroupBox("Step 2 — Select your audio devices (optional)")
         s3l = QVBoxLayout(step3)
         s3l.addWidget(_guide_label(
-            "After the controller connects, open the <b>Settings</b> panel at the bottom "
-            "of the main window and choose your <b>Microphone</b> and <b>Speaker</b> "
-            "devices for the mic monitoring (crossfader loopback) feature."
+            "If you want to use the <b>mic monitoring</b> feature (crossfader loopback), "
+            "open the <b>Settings</b> panel and choose your <b>Microphone</b> and "
+            "<b>Speaker</b> devices after the controller connects."
         ))
         root.addWidget(step3)
 
