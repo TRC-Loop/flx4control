@@ -12,16 +12,40 @@ Write-Host "============================================================"
 Write-Host ""
 
 # ------------------------------------------------------------
-# Find Python 3.10+
+# If running from TEMP → bootstrap full repo
+# ------------------------------------------------------------
+if ($PSScriptRoot -like "*AppData\Local\Temp*") {
+
+    Write-Host "[Bootstrap] Downloading full repository..."
+
+    $zipUrl = "https://github.com/TRC-Loop/flx4control/archive/refs/heads/main.zip"
+    $zipPath = Join-Path $env:TEMP "flx4control.zip"
+    $extractPath = Join-Path $env:TEMP "flx4control_src"
+
+    Invoke-WebRequest $zipUrl -OutFile $zipPath
+
+    if (Test-Path $extractPath) {
+        Remove-Item $extractPath -Recurse -Force
+    }
+
+    Expand-Archive $zipPath -DestinationPath $extractPath
+
+    $realRoot = Get-ChildItem $extractPath | Select-Object -First 1
+    $newInstaller = Join-Path $realRoot.FullName "install.ps1"
+
+    Write-Host "Re-launching installer from extracted source..."
+    powershell -ExecutionPolicy Bypass -File $newInstaller -Target $Target
+    exit
+}
+
+# ------------------------------------------------------------
+# Find Python
 # ------------------------------------------------------------
 Write-Host "[1/7] Checking Python..."
 
 $pythonCmd = @("py","python","python3") |
     Where-Object {
-        try {
-            & $_ --version *> $null
-            $true
-        } catch { $false }
+        try { & $_ --version *> $null; $true } catch { $false }
     } | Select-Object -First 1
 
 if (-not $pythonCmd) {
@@ -93,8 +117,6 @@ Write-Host "[2/7] Copying application files..."
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-$exclude = @(".venv","__pycache__",".git","*.tmp","*.log")
-
 robocopy $PSScriptRoot $installDir /E /IS /IT `
     /XD .venv __pycache__ .git `
     /XF *.tmp *.log `
@@ -120,19 +142,10 @@ if (Test-Path $venvDir) {
 
 & $pythonCmd -m venv $venvDir
 
-# ------------------------------------------------------------
-# Upgrade pip
-# ------------------------------------------------------------
 Write-Host ""
-Write-Host "[4/7] Upgrading pip..."
-& $venvPy -m pip install --upgrade pip | Out-Null
+Write-Host "[4/7] Installing dependencies..."
 
-# ------------------------------------------------------------
-# Install dependencies
-# ------------------------------------------------------------
-Write-Host ""
-Write-Host "[5/7] Installing dependencies..."
-
+& $venvPy -m pip install --upgrade pip
 & $venvPy -m pip install `
     "PySide6>=6.5" `
     "mido>=1.3.3,<2.0.0" `
@@ -142,37 +155,24 @@ Write-Host "[5/7] Installing dependencies..."
     "pyautogui" `
     "pynput" `
     "pycaw" `
-    "comtypes"
-
-$localFlx4 = Join-Path $PSScriptRoot "..\flx4py"
-
-if (Test-Path (Join-Path $localFlx4 "pyproject.toml")) {
-    & $venvPy -m pip install $localFlx4
-}
-else {
-    & $venvPy -m pip install "git+https://github.com/TRC-Loop/flx4py.git"
-}
+    "comtypes" `
+    "flx4py"
 
 # ------------------------------------------------------------
-# Create launcher
+# Launcher
 # ------------------------------------------------------------
-Write-Host ""
-Write-Host "[6/7] Creating launcher..."
-
 $launcher = Join-Path $installDir "FLX4Control.bat"
 @"
 @echo off
 start "" "$venvDir\Scripts\pythonw.exe" "$installDir\main.py"
 "@ | Set-Content $launcher -Encoding ASCII
 
-# Desktop shortcut
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\FLX4 Control.lnk")
 $Shortcut.TargetPath = $launcher
 $Shortcut.WorkingDirectory = $installDir
 $Shortcut.Save()
 
-# ------------------------------------------------------------
 Write-Host ""
 Write-Host "============================================================"
 Write-Host "Installation complete."
