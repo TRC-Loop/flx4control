@@ -107,15 +107,13 @@ if (-not $Target) {
 
 if ($Target -eq "ProgramFiles") {
     $installDir = "$env:ProgramFiles\flx4control"
-    $isAdmin = ([Security.Principal.WindowsPrincipal]
-        [Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 
     if (-not $isAdmin) {
         Write-Host "  Requesting administrator privileges..." -ForegroundColor Yellow
-        Start-Process powershell `
-            -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -Target ProgramFiles" `
-            -Verb RunAs
+        Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -Target ProgramFiles" -Verb RunAs
         exit
     }
 } else {
