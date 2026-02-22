@@ -34,8 +34,13 @@ if ($PSScriptRoot -like "*AppData\Local\Temp*") {
     $newInstaller = Join-Path $realRoot.FullName "install.ps1"
 
     Write-Host "Re-launching installer from extracted source..."
-    powershell -ExecutionPolicy Bypass -File $newInstaller -Target $Target
-    exit
+    if ($Target) {
+        powershell -ExecutionPolicy Bypass -File $newInstaller -Target $Target
+    }
+    else {
+        powershell -ExecutionPolicy Bypass -File $newInstaller
+    }
+exit
 }
 
 # ------------------------------------------------------------
