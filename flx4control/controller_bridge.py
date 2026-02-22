@@ -265,7 +265,7 @@ class ControllerBridge(QObject):
             pad = event.pad
             bank = self._current_bank.get(deck, 0)
             action = self.config.get_pad_action(deck, bank, pad)
-            self._execute_action(action)
+            self._dispatch_action(action)
             self.pad_triggered.emit(deck, pad)
 
         # ---- Tab / bank buttons ----
@@ -282,13 +282,13 @@ class ControllerBridge(QObject):
         @ctrl.on_button("PLAY_PAUSE", pressed=True)
         def on_play_pause(event: flx4py.ButtonEvent) -> None:
             action = self.config.get_button_action(event.deck, "PLAY_PAUSE")
-            self._execute_action(action)
+            self._dispatch_action(action)
 
         # ---- CUE button → configurable action ----
         @ctrl.on_button("CUE", pressed=True)
         def on_cue(event: flx4py.ButtonEvent) -> None:
             action = self.config.get_button_action(event.deck, "CUE")
-            self._execute_action(action)
+            self._dispatch_action(action)
 
         # ---- Channel faders → output / mic volume ----
         @ctrl.on_knob("CH_FADER")
@@ -354,6 +354,10 @@ class ControllerBridge(QObject):
     # ------------------------------------------------------------------
     # Action execution
     # ------------------------------------------------------------------
+
+    def _dispatch_action(self, action: dict) -> None:
+        """Run an action in a daemon thread so the MIDI listener is never blocked."""
+        threading.Thread(target=self._execute_action, args=(action,), daemon=True).start()
 
     def _execute_action(self, action: dict) -> None:
         atype = action.get("type", "none")

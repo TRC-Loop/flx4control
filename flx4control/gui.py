@@ -7,13 +7,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QRect, QTimer, Signal, Slot
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
-    QProgressBar, QPushButton, QRadioButton, QSizePolicy, QSpinBox,
+    QPushButton, QRadioButton, QSizePolicy, QSpinBox,
     QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -250,10 +250,10 @@ class PadButton(QPushButton):
         self.set_action({"type": "none"})
 
     _LABELS = {
-        "media_play_pause": "▶/❚❚ Media",
-        "media_next":       "⏭ Next",
-        "media_previous":   "⏮ Prev",
-        "mute_mic":         "🎙 Mute",
+        "media_play_pause": "Play/Pause",
+        "media_next":       ">> Next",
+        "media_previous":   "<< Prev",
+        "mute_mic":         "Mic Mute",
     }
 
     def flash(self) -> None:
@@ -377,7 +377,7 @@ class PadConfigDialog(QDialog):
 
         preview_row = QHBoxLayout()
         preview_row.addStretch()
-        self.preview_btn = QPushButton("▶  Preview")
+        self.preview_btn = QPushButton("Preview")
         self.preview_btn.setMaximumWidth(100)
         self.preview_btn.clicked.connect(self._preview_sound)
         preview_row.addWidget(self.preview_btn)
@@ -501,55 +501,72 @@ class PadConfigDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class VolumeOverlay(QWidget):
-    """Floating volume flyout that auto-hides after 1.5 s of inactivity."""
+    """Floating volume flyout — painted directly, no animated widgets."""
 
     def __init__(self, parent: QWidget = None) -> None:
-        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        super().__init__(
+            parent,
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool,
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(240, 72)
-        self.setStyleSheet("""
-            QWidget { background: #1a1a2a; border: 1px solid #303050; border-radius: 8px; }
-            QLabel#title { color: #888; font-size: 11px; }
-            QLabel#pct { color: #4dffaa; font-size: 20px; font-weight: bold; }
-            QProgressBar {
-                background: #252525; border: none; border-radius: 4px; height: 8px;
-            }
-            QProgressBar::chunk { background: #4dffaa; border-radius: 4px; }
-        """)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(240, 68)
+        self._label = ""
+        self._value = 0.0
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
-
-        self._title = QLabel("")
-        self._title.setObjectName("title")
-        layout.addWidget(self._title)
-
-        row = QHBoxLayout()
-        self._bar = QProgressBar()
-        self._bar.setRange(0, 100)
-        self._bar.setTextVisible(False)
-        self._bar.setFixedHeight(8)
-        row.addWidget(self._bar, 1)
-        self._pct = QLabel("0%")
-        self._pct.setObjectName("pct")
-        self._pct.setFixedWidth(50)
-        self._pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self._pct)
-        layout.addLayout(row)
-
     def show_volume(self, label: str, value: float) -> None:
-        pct = int(value * 100)
-        self._title.setText(label)
-        self._bar.setValue(pct)
-        self._pct.setText(f"{pct}%")
+        self._label = label
+        self._value = max(0.0, min(1.0, value))
         self._position()
         self.show()
         self.raise_()
+        self.update()            # immediate repaint — no animation
         self._timer.start(1500)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Background pill
+        p.setBrush(QBrush(QColor("#1a1a2a")))
+        p.setPen(QColor("#303050"))
+        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
+
+        # Label
+        lbl_font = QFont()
+        lbl_font.setPointSize(9)
+        p.setFont(lbl_font)
+        p.setPen(QColor("#888888"))
+        p.drawText(QRect(14, 10, 180, 18), Qt.AlignmentFlag.AlignLeft, self._label)
+
+        # Percentage text
+        pct = int(self._value * 100)
+        pct_font = QFont()
+        pct_font.setPointSize(16)
+        pct_font.setBold(True)
+        p.setFont(pct_font)
+        p.setPen(QColor("#4dffaa"))
+        p.drawText(QRect(160, 6, 68, 30), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{pct}%")
+
+        # Bar background
+        bar_rect = QRect(14, 44, 212, 8)
+        p.setBrush(QBrush(QColor("#252525")))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(bar_rect, 4, 4)
+
+        # Bar fill — no interpolation, draws exactly at current value
+        if pct > 0:
+            fill_w = int(212 * self._value)
+            fill_rect = QRect(14, 44, fill_w, 8)
+            p.setBrush(QBrush(QColor("#4dffaa")))
+            p.drawRoundedRect(fill_rect, 4, 4)
+
+        p.end()
 
     def _position(self) -> None:
         screen = QApplication.primaryScreen()
@@ -577,9 +594,7 @@ class ProgramSwitcherDialog(QDialog):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setMinimumWidth(360)
         self.setMaximumHeight(480)
 
@@ -715,6 +730,8 @@ class ProgramSwitcherDialog(QDialog):
             from . import system_control
             system_control.focus_app(self._selected_app)
             self.hide()
+            # Restore on-top after target app is focused
+            QTimer.singleShot(300, self._restore_topmost)
 
     def set_app_volume(self, volume: float) -> None:
         """Set the audio volume of the selected application."""
@@ -725,6 +742,24 @@ class ProgramSwitcherDialog(QDialog):
         pct = int(volume * 100)
         bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
         self.vol_label.setText(f"Volume: {bar}  {pct}%")
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._restore_topmost)
+
+    def _restore_topmost(self) -> None:
+        self.raise_()
+        self.activateWindow()
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                HWND_TOPMOST = -1
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                hwnd = int(self.winId())
+                ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+            except Exception:
+                pass
 
     def _on_item_activated(self, item) -> None:
         self._selected_app = item.text()
@@ -1272,7 +1307,7 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _on_play_state_changed(self, playing: bool) -> None:
-        state = "▶  Playing" if playing else "❚❚  Paused"
+        state = "Playing" if playing else "|| Paused"
         self.status_label.setText(
             f"●  Connected  ·  {state}"
             if self.bridge.connected else self.status_label.text()

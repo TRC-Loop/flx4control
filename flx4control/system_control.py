@@ -141,19 +141,39 @@ def send_media_key(action: str) -> None:
     action: 'play_pause' | 'next' | 'previous'
     """
     if _PLATFORM == "Windows":
-        # keybd_event with VK_MEDIA_* is instant and non-blocking.
-        # SendMessageW(HWND_BROADCAST) broadcasts to every window synchronously
-        # and can block the calling thread for several seconds — avoid it.
+        # Use SendInput (modern API, instant, non-blocking).
+        # Media keys are extended keys and REQUIRE KEYEVENTF_EXTENDEDKEY.
         try:
-            import ctypes
+            import ctypes, ctypes.wintypes as wt
             VK = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1}.get(action)
             if VK is not None:
-                KEYEVENTF_KEYUP = 0x0002
-                ctypes.windll.user32.keybd_event(VK, 0, 0, 0)              # key down
-                ctypes.windll.user32.keybd_event(VK, 0, KEYEVENTF_KEYUP, 0)  # key up
+                KEYEVENTF_EXTENDEDKEY = 0x0001
+                KEYEVENTF_KEYUP       = 0x0002
+                INPUT_KEYBOARD = 1
+
+                class _KBI(ctypes.Structure):
+                    _fields_ = [("wVk", wt.WORD), ("wScan", wt.WORD),
+                                 ("dwFlags", wt.DWORD), ("time", wt.DWORD),
+                                 ("dwExtraInfo", ctypes.POINTER(wt.ULONG))]
+
+                class _U(ctypes.Union):
+                    _fields_ = [("ki", _KBI), ("_pad", ctypes.c_byte * 24)]
+
+                class _INPUT(ctypes.Structure):
+                    _fields_ = [("type", wt.DWORD), ("u", _U)]
+
+                extra = wt.ULONG(0)
+                p_extra = ctypes.pointer(extra)
+                inputs = (_INPUT * 2)(
+                    _INPUT(INPUT_KEYBOARD,
+                           _U(ki=_KBI(VK, 0, KEYEVENTF_EXTENDEDKEY, 0, p_extra))),
+                    _INPUT(INPUT_KEYBOARD,
+                           _U(ki=_KBI(VK, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0, p_extra))),
+                )
+                ctypes.windll.user32.SendInput(2, inputs, ctypes.sizeof(_INPUT))
             return
         except Exception as exc:
-            print(f"[media] keybd_event({action}): {exc}")
+            print(f"[media] SendInput({action}): {exc}")
     try:
         from pynput.keyboard import Key, Controller
         key_map = {
